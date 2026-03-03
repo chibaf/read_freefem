@@ -1,0 +1,202 @@
+// FLiNaK_Q3n_2j.edp
+// ije7ht
+// FLiNaK溶融塩炉 - 熱源付き自然対流シミュレーション
+// 内側領域（球状）に熱量を投入する設定
+
+bool debug = true;
+
+// メッシュ分割数
+int an1=5, an2=20;
+
+// UNOMIプロトタイプ形状
+// (SN1Blk5)
+// --- 1. Parameters ---
+real w = 0.25;
+real H = 0.8;
+real S = 0.1;
+real H1 = 0.6;
+real d = 0.15;
+real w1 = 0.03;
+real ch = 0.04;
+
+// --- obs heat and flow parameters
+real kfluid = 0.6; //流体(H2O)の熱伝導率 0.6（W/(K*m)）
+real kins = 0.06;  //断熱材の熱伝導率 0.06（W/(K*m)）
+
+// ===== 2. 境界定義 =====
+border C1(t=0, w){x=t; y=0; label=1;}
+border C2(t=0, H-ch){x=w; y=t; label=2;}
+border Chamfer(t=0, 1){x=w - t*ch; y=H-ch + t*ch; label=2;}
+border C3(t=w-ch, 0){x=t; y=H; label=3;}
+border C4(t=H, 0){x=0; y=t; label=11;}
+
+// 内部構造物の境界 (labelを20に変更)
+// 修正版：接続を確実にする定義
+border D1(t=0, w1)    {x=d+t; y=S; label=20;}                 // 右へ
+border D2(t=S, S+H1)  {x=d+w1; y=t; label=20;}               // 上へ
+border D3(t=0, pi)    {x=d+w1/2.0 + (w1/2.0)*cos(t); 
+                       y=S+H1 + (w1/2.0)*sin(t); label=20;}  // 半円（反時計回り）
+border D4(t=S+H1, S)  {x=d; y=t; label=20;}                 // 下へ
+
+
+// ===== 3. メッシュ生成 =====
+// 計算用メッシュ
+// メッシュ生成 (外枠からDを引く)
+mesh Th = buildmesh(C1(10) + C2(80) + Chamfer(5) + C3(10) + C4(40) 
+                   + D1(-10) + D2(-60) + D3(-40) + D4(-100));
+
+// 描画用メッシュ（同じ分割）
+// メッシュ生成 (外枠からDを引く)
+mesh Th2 = buildmesh(C1(10) + C2(80) + Chamfer(5) + C3(10) + C4(40) 
+                   + D1(-10) + D2(-60) + D3(-40) + D4(-100));
+savemesh(Th,"Th2.msh");
+
+// メッシュ表示
+plot(Th2, wait=1);
+
+// ===== 4. 有限要素空間の定義 =====
+fespace Ph(Th, P0);
+fespace Vh(Th, P2), Qh(Th, P1);
+fespace Vh2(Th2, P2), Qh2(Th2, P1);
+
+// 速度場：u(半径方向), v(軸方向)
+Vh u=0, v=0, uu, vv, up, vp;
+
+// 圧力場
+Qh p=0, pp;
+
+// ===== 5. 温度・熱源設定 =====
+real kelvin = 273.15;//絶対温度のオフセット [K]
+real low = 450 + kelvin;//低温側境界温度：723K（450℃）
+real high = 450 + kelvin;//高温側境界温度：723K（450℃）
+
+// ===== 6. 物理定数（流体：溶融塩FLiNaK） =====
+int n = 0;
+
+// 無次元化用の典型値
+real TL = 1.0;//典型長さ [m] (for calculating Re)
+real TU = 2.0;//典型速度 [m/s] (for calculating Re)
+real TDT = 50.0;//典型温度差 [K]  
+real TT = 500+kelvin;//基準温度 [K] 
+
+// 物理定数
+real g = 9.8;//重力加速度 [m/s²]
+real mu = 2.9e-3;//動粘性係数 [Pa·s]
+real rho = 2.02e3;//密度 [kg/m³]
+real beta = 3.61e-4;//体積熱膨張係数 [1/K]
+real Cp = 1.883e3;//比熱容量 [J/kg/K]
+real rhoCp= rho*Cp;//比熱容量 [J/m3/K]
+real kappa = 0.92;//熱伝導率 [W/m/K]
+
+// 熱源の強度：内側領域に高温を投入
+//Q0 = Q0 + kelvin;//熱源温度：1273K（1000℃） (not needed)
+real Qpower = 1000;  //50E6（W/m3） 熱源の強さ(Volumetric power density) 
+real Q0 = Qpower/rhoCp;   
+real V0=1.; //pump force (?? what is unit??)
+
+// 熱源関数：内側領域（0 < x < d, S < y < S+H1）でQ0を設定
+Qh fQ = ( (x >= 0 && x < d) && (y >= S && y <= S+H1) ) ? Q0 : 0.0;
+Ph fP = ( (x >= 0 && x < d) && (y >= S && y <= S+H1/20.) ) ? V0 : 0.0; // 20260216
+
+// ===== 7. 無次元数の計算 =====
+real Re, Pr;
+Re = rho * TU * TL / mu;//レイノルズ数
+Pr = Cp * mu / kappa;//プラントル数
+
+// ===== 8. 初期条件・計算パラメータ =====
+Qh r = high, rr, rp;//温度場：初期値=高温
+
+// 時間積分パラメータ
+real T = 100.0;//総計算時間 [s]
+//real dt = 0.001;//時間刻み幅 [s]（※100,000ステップ）
+real dt = 0.001;//時間刻み幅 [s]（※100,000ステップ）
+
+// 出力用変数
+Vh2 wu, wv, wr;
+Qh2 wp;
+real wt;
+
+// ===== 9. メインループ：時間積分 =====
+for (real t=0; t<0.02; t+=dt){
+    
+    // 前ステップの速度を保存
+    up = u;
+    vp = v;
+    
+    // ===== Navier-Stokes方程式の求解 =====
+    solve NS([u,v,p], [uu,vv,pp], solver=Crout, init=n) =
+    int2d(Th)( 
+        // 非定常項
+        u*uu + v*vv
+        // 粘性項（軸対称）
+        + (dt/Re)*(dx(u)*dx(uu) + dx(u)*uu/x + dy(u)*dy(uu)
+                 + dx(v)*dx(vv) + dx(v)*vv/x + dy(v)*dy(vv) - u*uu/(x*x))
+        // 圧力項
+        + p*pp*1.0e-6
+        - dt*(p*(dx(uu)+dy(vv)) + pp*(dx(u)+dy(v)))
+    )
+    - int2d(Th)(
+        // 移流項（特性法）
+        convect([up,vp], -dt, up)*uu
+        + convect([up,vp], -dt, vp)*vv
+        // 浮力項（自然対流駆動力）：温度勾配による
+        + (r-low)*vv*g*beta  // "/" removed
+        + fP*vv   // 20260227
+    )
+    // 速度境界条件：No-slip（壁で速度=0）
+    + on(1,2,3, v=0, u=0)
+    + on(11,u=0) 
+    + on(20, u=0, v=0); 
+
+    // ===== 熱方程式の求解 =====
+    solve thermal(r, rr, solver=Crout, init=n) =
+    int2d(Th)(
+        // 非定常項 + 拡散項
+        r*rr + dt*(dx(r)*dx(rr) + dx(r)*rr/x + dy(r)*dy(rr))/Re/Pr
+    )
+    - int2d(Th)(
+        // 移流項（特性法）
+        convect([up,vp], -dt, rp)*rr
+        // ★★★ 熱源項（POSITIVE）★★★
+        // 内側領域に熱量Q0を投入する
+        + fQ*rr*dt
+    )
+    // 温度境界条件：Dirichlet
+    // label=3 書かないので天面は「断熱
+    + on(1, r=low)   //ラベル1（外壁）：低温
+    + on(2, r=low); //ラベル2（外壁）：低温
+
+
+    // ===== 無次元量を物理単位に復元 =====
+    wu = u;//速度 [m/s]
+    wv = v;
+    wr = r - kelvin;//温度 [℃]
+    wp = p;//圧力 [Pa]
+    wt = t;//時間 [s]
+
+    // ===== 結果表示 =====
+   real[int] viso(31);
+   for (int i = 0; i < viso.n; i++)
+   viso[i] = i*0.1;
+
+//    plot(wr,value=true, fill=true,cmm="t="+wt);
+    plot([wu,wv], wr,value=1, coef=0.0035, cmm="t="+wt);  // add vector field
+    
+    n++;
+}
+ofstream tri("Th.csv");
+for(int i=0;i<Th.nt;i++){
+	tri << Th[i][0] << "," << Th[i][1] << "," << Th[i][2] << endl;
+}
+ofstream sol1("u.csv");
+for(int i=0;i<Th.nv;i++){
+	sol1 << Th(i).x << "," << Th(i).y << "," << u[][i] << endl;
+}
+ofstream sol2("v.csv");
+for(int i=0;i<Th.nv;i++){
+	sol2 << Th(i).x << "," << Th(i).y << "," << v[][i] << endl;
+}
+ofstream sol3("r.csv");
+for(int i=0;i<Th.nv;i++){
+	sol3 << Th(i).x << "," << Th(i).y << "," << r[][i] << endl;
+}
