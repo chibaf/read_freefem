@@ -5,20 +5,14 @@ from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 
 # read data
-coord=np.genfromtxt("Th.csv", delimiter=",")
-print(coord)
-
-x = coord[:,0]
-y = coord[:,1]
-z = coord[:,2]
-tridata=np.genfromtxt("Th.csv", delimiter=",")
-tri = mtri.Triangulation(x,y,triangles=tridata)
+a=np.genfromtxt("u.csv", delimiter=",", usemask=True)
+print(a[0][0:3])
 
 # plot
-fig = plt.figure()
-ax = fig.gca(projection='3d')
-ax.plot_trisurf(tri,z,cmap=plt.cm.jet)
-ax.set_xlabel('x')
-ax.set_ylabel('y')
-ax.set_zlabel('u')
-plt.show()
+#fig = plt.figure()
+#ax = fig.gca(projection='3d')
+#ax.plot_trisurf(tri,z,cmap=plt.cm.jet)
+#ax.set_xlabel('x')
+#ax.set_ylabel('y')
+#ax.set_zlabel('u')
+#plt.show()
